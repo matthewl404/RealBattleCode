@@ -26,7 +26,7 @@ public class BabyRat {
 		if (target == null)
 		{
 			int x = rc.getMapWidth() - rc.getLocation().x;
-			int y = rc.getMapWidth() - rc.getLocation().y;
+			int y = rc.getMapHeight() - rc.getLocation().y;
 			target = new MapLocation(x,y);
 		}	
 	}
