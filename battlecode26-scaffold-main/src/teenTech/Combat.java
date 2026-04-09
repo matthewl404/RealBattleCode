@@ -1,4 +1,4 @@
-package teenTech;
+package theVibers;
  
 import battlecode.common.*;
  
@@ -55,7 +55,6 @@ public class Combat {
         if (coop) {
             return -1; // never attack enemy rats during cooperation
         }
-        // Backstab mode: attack enemies
         if (robot.team != myTeam) {
             return robot.type == UnitType.RAT_KING ? 2 : 1;
         }
