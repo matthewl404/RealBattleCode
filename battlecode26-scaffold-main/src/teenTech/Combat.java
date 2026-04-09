@@ -1,4 +1,4 @@
-package theVibers;
+package teenTech;
  
 import battlecode.common.*;
  
