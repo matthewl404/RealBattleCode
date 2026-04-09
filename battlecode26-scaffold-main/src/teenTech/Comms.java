@@ -1,106 +1,107 @@
 package theVibers;
-
+ 
 import battlecode.common.*;
-
+ 
 /**
- * Graph-based passability map with BFS pathfinding.
+ * Handles all shared-array communication between robots.
  *
- * Each robot maintains its own learned map of tile passability, updated
- * incrementally from sensor data every turn. BFS over this map replaces
- * the reactive bug-navigation fallback with a planned path around known obstacles.
+ * Layout (64 slots, values 0-1023):
+ *   [0-1]   Rat king location:  x+1, y+1  (0 = unknown)
+ *   [2-11]  Cat locations:      up to 5 cats, each stored as x+1, y+1
+ *   [12]    Mine count
+ *   [13-32] Mine locations:     up to 10 mines, each stored as x+1, y+1
  *
- * Design notes:
- *   - Generation-based visited marking avoids clearing arrays between BFS calls.
- *   - Unsensed tiles are treated as passable (optimistic) to allow exploration
- *     into unknown territory.
- *   - BFS is capped at MAX_BFS_NODES to keep per-turn bytecode usage bounded.
+ * Coordinates are stored as (coord + 1) so that 0 acts as a "no data" sentinel,
+ * since valid map coordinates are 0–59.
  */
-public class Graph {
+public class Comms {
+ 
+    static final int IDX_KING_X      = 0;
+    static final int IDX_KING_Y      = 1;
+    static final int IDX_CATS_START  = 2;
+    static final int MAX_CATS        = 5;
 
-    static boolean[] passable;
-    static boolean[] sensed;
-    static int       mapWidth;
-    static int       mapHeight;
-    static boolean   initialized = false;
-
-    static int[] visitedGen;
-    static int[] parentIdx;
-    static int[] bfsQueue;
-    static int   gen = 0;
-
-    /** Maximum BFS nodes explored per call (bounds bytecode cost). */
-    static final int MAX_BFS_NODES = 50;
-
-    public static void init(RobotController rc) {
-        if (initialized) return;
-        mapWidth  = rc.getMapWidth();
-        mapHeight = rc.getMapHeight();
-        int size  = mapWidth * mapHeight;
-        passable   = new boolean[size];
-        sensed     = new boolean[size];
-        visitedGen = new int[size];
-        parentIdx  = new int[size];
-        bfsQueue   = new int[size];
-        initialized = true;
+    // Mine tracking — any robot may write (baby rats report directly)
+    static final int IDX_MINES_COUNT = 12;
+    static final int IDX_MINES_START = 13;
+    static final int MAX_MINES       = 10;
+ 
+    private static int encode(int coord) { return coord + 1; }
+    private static int decode(int stored) { return stored - 1; }
+    private static boolean valid(int stored) { return stored != 0; }
+ 
+    static void writeKingLocation(RobotController rc) throws GameActionException {
+        MapLocation loc = rc.getLocation();
+        rc.writeSharedArray(IDX_KING_X, encode(loc.x));
+        rc.writeSharedArray(IDX_KING_Y, encode(loc.y));
     }
-
-    public static void update(MapInfo[] tiles) {
-        for (MapInfo info : tiles) {
-            MapLocation loc = info.getMapLocation();
-            int i = loc.y * mapWidth + loc.x;
-            sensed[i]   = true;
-            passable[i] = info.isPassable();
-        }
+ 
+    static MapLocation readKingLocation(RobotController rc) throws GameActionException {
+        int sx = rc.readSharedArray(IDX_KING_X);
+        int sy = rc.readSharedArray(IDX_KING_Y);
+        if (!valid(sx) || !valid(sy)) return null;
+        return new MapLocation(decode(sx), decode(sy));
     }
-
-    public static Direction findNextStep(MapLocation src, MapLocation dst) {
-        if (!initialized || src.equals(dst)) return null;
-
-        gen++;
-        final int thisGen = gen;
-
-        int srcIdx = src.y * mapWidth + src.x;
-        int dstIdx = dst.y * mapWidth + dst.x;
-
-        int head = 0, tail = 0;
-        bfsQueue[tail++]   = srcIdx;
-        visitedGen[srcIdx] = thisGen;
-        parentIdx[srcIdx]  = srcIdx;
-
-        int explored = 0;
-        boolean reached = false;
-
-        outer:
-        while (head < tail && explored < MAX_BFS_NODES) {
-            int cur = bfsQueue[head++];
-            explored++;
-            int cx = cur % mapWidth;
-            int cy = cur / mapWidth;
-
-            for (Direction dir : Direction.values()) {
-                if (dir == Direction.CENTER) continue;
-                int nx = cx + dir.dx;
-                int ny = cy + dir.dy;
-                if (nx < 0 || nx >= mapWidth || ny < 0 || ny >= mapHeight) continue;
-                int nIdx = ny * mapWidth + nx;
-                if (visitedGen[nIdx] == thisGen) continue;
-                if (sensed[nIdx] && !passable[nIdx]) continue;
-                visitedGen[nIdx] = thisGen;
-                parentIdx[nIdx]  = cur;
-                if (nIdx == dstIdx) {
-                    reached = true;
-                    break outer;
-                }
-                bfsQueue[tail++] = nIdx;
+ 
+    static void writeCatLocations(RobotController rc) throws GameActionException {
+        RobotInfo[] nearby = rc.senseNearbyRobots(-1);
+        int slot = 0;
+        for (RobotInfo robot : nearby) {
+            if (slot >= MAX_CATS) break;
+            if (robot.type == UnitType.CAT) {
+                int base = IDX_CATS_START + slot * 2;
+                rc.writeSharedArray(base,     encode(robot.location.x));
+                rc.writeSharedArray(base + 1, encode(robot.location.y));
+                slot++;
             }
         }
-
-        if (!reached) return null;
-
-        int step = dstIdx;
-        while (parentIdx[step] != srcIdx) {
-            step = parentIdx[step];
+        for (; slot < MAX_CATS; slot++) {
+            int base = IDX_CATS_START + slot * 2;
+            rc.writeSharedArray(base,     0);
+            rc.writeSharedArray(base + 1, 0);
         }
-        return src.directionTo(new MapLocation(step % mapWidth, step / mapWidth));
+    }
+
+    static void reportMine(RobotController rc, MapLocation loc) throws GameActionException {
+        int count = rc.readSharedArray(IDX_MINES_COUNT);
+        for (int i = 0; i < count; i++) {
+            int base = IDX_MINES_START + i * 2;
+            if (decode(rc.readSharedArray(base))     == loc.x &&
+                decode(rc.readSharedArray(base + 1)) == loc.y) {
+                return;
+            }
+        }
+        if (count >= MAX_MINES) return;
+        int base = IDX_MINES_START + count * 2;
+        rc.writeSharedArray(base,     encode(loc.x));
+        rc.writeSharedArray(base + 1, encode(loc.y));
+        rc.writeSharedArray(IDX_MINES_COUNT, count + 1);
+    }
+
+    static MapLocation[] readMineLocations(RobotController rc) throws GameActionException {
+        int count = rc.readSharedArray(IDX_MINES_COUNT);
+        MapLocation[] mines = new MapLocation[count];
+        for (int i = 0; i < count; i++) {
+            int base = IDX_MINES_START + i * 2;
+            mines[i] = new MapLocation(decode(rc.readSharedArray(base)),
+                                       decode(rc.readSharedArray(base + 1)));
+        }
+        return mines;
+    }
+ 
+    static MapLocation[] readCatLocations(RobotController rc) throws GameActionException {
+        MapLocation[] buf = new MapLocation[MAX_CATS];
+        int count = 0;
+        for (int i = 0; i < MAX_CATS; i++) {
+            int base = IDX_CATS_START + i * 2;
+            int sx = rc.readSharedArray(base);
+            int sy = rc.readSharedArray(base + 1);
+            if (valid(sx) && valid(sy)) {
+                buf[count++] = new MapLocation(decode(sx), decode(sy));
+            }
+        }
+        MapLocation[] result = new MapLocation[count];
+        System.arraycopy(buf, 0, result, 0, count);
+        return result;
     }
 }
