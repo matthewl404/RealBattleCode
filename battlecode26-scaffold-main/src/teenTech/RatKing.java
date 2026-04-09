@@ -1,4 +1,4 @@
-package theVibers;
+package teenTech;
 
 import battlecode.common.*;
  
@@ -16,16 +16,49 @@ import battlecode.common.*;
  *   Spawning only happens when global cheese exceeds (spawn cost + buffer).
  */
 public class RatKing {
+	/*
+	public static void run1(RobotController rc)
+	{
+		while (true)
+		{
+			try {
+				tryToSpawn(rc);	
  
+			}
+			catch (GameActionException e){
+				System.out.println(e);
+			}
+			Clock.yield();
+		}
+	}
+ 
+	public static void tryToSpawn(RobotController rc) throws GameActionException
+	{
+		//pick a location to spawn
+		// -- get the list of possible spawn locations
+		// -- go with the first one on the list that is available
+		MapLocation[] spawnLocs = rc.getAllLocationsWithinRadiusSquared(rc.getLocation(), 8);
+ 
+		for (MapLocation loc: spawnLocs) {
+			//spawn a rat at a chosen location
+			if (rc.canBuildRat(loc))
+			{
+				rc.buildRat(loc);
+				break;
+			}
+		}
+	}
+ 	*/
     /** Cheese kept in reserve; spawning is deferred until we exceed this. */
     private static final int CHEESE_BUFFER = 200;
  
     /** Minimum cheese before we bother placing cat traps. */
     private static final int TRAP_THRESHOLD = 60;
-
-    /** F6: hard cap on baby rats to prevent runaway spawn-cost scaling. */
-    private static final int MAX_BABY_RATS = 20;
-
+ 
+    // -----------------------------------------------------------------------
+    // Entry point
+    // -----------------------------------------------------------------------
+ 
     public static void run(RobotController rc) {
         while (true) {
             try {
@@ -37,11 +70,11 @@ public class RatKing {
         }
     }
  
+    // -----------------------------------------------------------------------
+    // Per-turn logic
+    // -----------------------------------------------------------------------
+ 
     private static void runTurn(RobotController rc) throws GameActionException {
-        // 0. Maintain the graph-based passability map
-        Graph.init(rc);
-        Graph.update(rc.senseNearbyMapInfos());
-
         // 1. Always broadcast location + cat sightings (no cooldown cost)
         Comms.writeKingLocation(rc);
         Comms.writeCatLocations(rc);
@@ -61,11 +94,21 @@ public class RatKing {
                 + " traps=" + rc.getNumberCatTraps());
     }
  
+    // -----------------------------------------------------------------------
+    // Actions
+    // -----------------------------------------------------------------------
+ 
+    /**
+     * Places one cat trap in the nearest valid adjacent tile.
+     * Cat traps deal 100 damage to cats and cost only 10 cheese — excellent value.
+     * Limited to 10 per team; we only place in cooperation mode.
+     */
     private static void tryPlaceCatTrap(RobotController rc) throws GameActionException {
         if (!rc.isActionReady())                   return;
         if (rc.getGlobalCheese() < TRAP_THRESHOLD) return;
-        if (rc.getNumberCatTraps() >= 10)          return;
+        if (rc.getNumberCatTraps() >= 10)          return; // engine cap
  
+        // Prefer tiles farther from the king so cats walk into them before reaching us
         MapLocation[] nearby = rc.getAllLocationsWithinRadiusSquared(rc.getLocation(), 8);
         for (MapLocation loc : nearby) {
             if (rc.canPlaceCatTrap(loc)) {
@@ -75,15 +118,13 @@ public class RatKing {
         }
     }
  
+    /**
+     * Spawns one baby rat at the first valid adjacent location.
+     * Defers if we don't have enough cheese above the safety buffer.
+     */
     private static void trySpawnRat(RobotController rc) throws GameActionException {
         if (!rc.isActionReady()) return;
-
-        // F6: count visible baby rats and enforce hard cap
-        RobotInfo[] friendly = rc.senseNearbyRobots(-1, rc.getTeam());
-        int babyRatCount = 0;
-        for (RobotInfo r : friendly) if (r.type == UnitType.BABY_RAT) babyRatCount++;
-        if (babyRatCount >= MAX_BABY_RATS) return;
-
+ 
         int cost   = rc.getCurrentRatCost();
         int cheese = rc.getGlobalCheese();
         if (cheese < cost + CHEESE_BUFFER) return;
