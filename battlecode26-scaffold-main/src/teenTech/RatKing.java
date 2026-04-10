@@ -1,64 +1,27 @@
-package teenTech;
+package theVibers1;
 
 import battlecode.common.*;
- 
+
 /**
- * Rat king AI.
  *
  * Each turn (in priority order):
- *   1. Communicate — write king location and visible cat positions to the shared array
+ *   1. Communicate — write king location and cat positions to the shared array
  *   2. Attack      — bite the highest-priority adjacent target
- *   3. Trap        — place a cat trap nearby during cooperation (up to the 10-trap cap)
- *   4. Spawn       — build a baby rat if we have enough cheese above our safety buffer
+ *   3. Dig         — remove the closest dirt tile within build range to clear paths
+ *   4. Spawn       — build a baby rat if we have enough cheese and are under the rat cap
  *
- * Cheese budget:
- *   We keep CHEESE_BUFFER in reserve to cover rat-king upkeep (2/round) and future traps.
- *   Spawning only happens when global cheese exceeds (spawn cost + buffer).
  */
 public class RatKing {
-	/*
-	public static void run1(RobotController rc)
-	{
-		while (true)
-		{
-			try {
-				tryToSpawn(rc);	
- 
-			}
-			catch (GameActionException e){
-				System.out.println(e);
-			}
-			Clock.yield();
-		}
-	}
- 
-	public static void tryToSpawn(RobotController rc) throws GameActionException
-	{
-		//pick a location to spawn
-		// -- get the list of possible spawn locations
-		// -- go with the first one on the list that is available
-		MapLocation[] spawnLocs = rc.getAllLocationsWithinRadiusSquared(rc.getLocation(), 8);
- 
-		for (MapLocation loc: spawnLocs) {
-			//spawn a rat at a chosen location
-			if (rc.canBuildRat(loc))
-			{
-				rc.buildRat(loc);
-				break;
-			}
-		}
-	}
- 	*/
+
     /** Cheese kept in reserve; spawning is deferred until we exceed this. */
-    private static final int CHEESE_BUFFER = 200;
- 
+    private static final int CHEESE_BUFFER = 50;
     /** Minimum cheese before we bother placing cat traps. */
-    private static final int TRAP_THRESHOLD = 60;
- 
+
+
     // -----------------------------------------------------------------------
-    // Entry point
+    // actual function
     // -----------------------------------------------------------------------
- 
+
     public static void run(RobotController rc) {
         while (true) {
             try {
@@ -69,70 +32,63 @@ public class RatKing {
             Clock.yield();
         }
     }
- 
+
     // -----------------------------------------------------------------------
     // Per-turn logic
     // -----------------------------------------------------------------------
- 
+
     private static void runTurn(RobotController rc) throws GameActionException {
-        // 1. Always broadcast location + cat sightings (no cooldown cost)
-        Comms.writeKingLocation(rc);
-        Comms.writeCatLocations(rc);
- 
-        // 2. Attack the best adjacent target (uses action cooldown)
-        Combat.tryAttack(rc);
- 
-        // 3. Place a cat trap if we're in cooperation, within trap cap, and can afford it
-        if (rc.isCooperation()) {
-            tryPlaceCatTrap(rc);
+    	//if(rc.canSenseNearbyRobots())
+    	if(rc.getRoundNum() > 100) {
+    		trySpawnDirt(rc);
+    	}
+        Combat.tryDigDirt(rc);          // 1. Dig closest dirt tile to clear paths
+        
+        if(rc.getRoundNum() < 30) {
+        	Comms.writeKingLocation(rc);    // 2. Broadcast location
+    	}
+        if (rc.getCurrentRatCost() < 67) {
+        	trySpawnRat(rc);                // 3. Spawn a baby rat if affordable and under cap
         }
- 
-        // 4. Spawn a baby rat if affordable
-        trySpawnRat(rc);
- 
+        Combat.tryAttack(rc);           // 4. Attack best adjacent target
+        
         rc.setIndicatorString("RatKing cheese=" + rc.getGlobalCheese()
                 + " traps=" + rc.getNumberCatTraps());
     }
- 
+
     // -----------------------------------------------------------------------
     // Actions
     // -----------------------------------------------------------------------
- 
+
+
+
     /**
-     * Places one cat trap in the nearest valid adjacent tile.
-     * Cat traps deal 100 damage to cats and cost only 10 cheese — excellent value.
-     * Limited to 10 per team; we only place in cooperation mode.
+     * Spawns one baby rat at the first valid adjacent location.
+     * Defers if we don't have enough cheese above the safety buffer,
+     * or if we already have 20 rats on map
      */
-    private static void tryPlaceCatTrap(RobotController rc) throws GameActionException {
-        if (!rc.isActionReady())                   return;
-        if (rc.getGlobalCheese() < TRAP_THRESHOLD) return;
-        if (rc.getNumberCatTraps() >= 10)          return; // engine cap
- 
-        // Prefer tiles farther from the king so cats walk into them before reaching us
+    
+    private static void trySpawnRat(RobotController rc) throws GameActionException {
+        if (!rc.isActionReady()) return;
+        if (rc.getCurrentRatCost() > 55) {
+        	return;
+        }
+
         MapLocation[] nearby = rc.getAllLocationsWithinRadiusSquared(rc.getLocation(), 8);
         for (MapLocation loc : nearby) {
-            if (rc.canPlaceCatTrap(loc)) {
-                rc.placeCatTrap(loc);
+            if (rc.canBuildRat(loc) && rc.getAllCheese() > CHEESE_BUFFER) {
+                rc.buildRat(loc);
                 return;
             }
         }
     }
- 
-    /**
-     * Spawns one baby rat at the first valid adjacent location.
-     * Defers if we don't have enough cheese above the safety buffer.
-     */
-    private static void trySpawnRat(RobotController rc) throws GameActionException {
+    private static void trySpawnDirt(RobotController rc) throws GameActionException {
         if (!rc.isActionReady()) return;
- 
-        int cost   = rc.getCurrentRatCost();
-        int cheese = rc.getGlobalCheese();
-        if (cheese < cost + CHEESE_BUFFER) return;
- 
+
         MapLocation[] nearby = rc.getAllLocationsWithinRadiusSquared(rc.getLocation(), 8);
         for (MapLocation loc : nearby) {
-            if (rc.canBuildRat(loc)) {
-                rc.buildRat(loc);
+            if (rc.canPlaceDirt(loc) && rc.getDirt() > 0) {
+                rc.placeDirt(loc);
                 return;
             }
         }
